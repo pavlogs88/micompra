@@ -142,7 +142,7 @@ def analyze_image_with_gemini(image_bytes):
 
         img = Image.open(io.BytesIO(image_bytes))
 
-        cats_str = ", ".join(st.session_state.categories.keys())
+        cats_str = ", ".join(st.session_state.get("categories", {}).keys())
         prompt = f"""Analizá esta imagen de una etiqueta o cartel de precio de supermercado argentino.
 Extraé la información visible y respondé SOLO con un JSON válido, sin texto adicional ni markdown.
 
@@ -179,7 +179,7 @@ with tab_cargar:
         <div class="total-label">Total estimado</div>
         <div class="total-amount">{fmt_price(total())}</div>
       </div>
-      <div style="color:#555;font-size:13px">{len(st.session_state.items)} productos</div>
+      <div style="color:#555;font-size:13px">{len(st.session_state.get("items", []))} productos</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -187,26 +187,26 @@ with tab_cargar:
     st.markdown("#### 📷 Fotografiar etiqueta")
     photo = st.camera_input("Apuntá al precio o etiqueta del producto", label_visibility="collapsed")
 
-    if photo and photo != st.session_state.last_photo:
-        st.session_state.last_photo = photo
+    if photo and photo != st.session_state.get("last_photo", None):
+        st.session_state["last_photo"] = photo
         with st.spinner("Analizando con IA..."):
             data = analyze_image_with_gemini(photo.getvalue())
             if data:
-                st.session_state.ai_data = data
+                st.session_state["ai_data"] = data
                 st.success("✓ IA completó los campos. Revisá y corregí si hace falta.")
             else:
                 st.warning("No se pudo extraer info. Completá los campos a mano.")
 
-    ai = st.session_state.ai_data
+    ai = st.session_state.get("ai_data", {})
 
     # ── Formulario ───────────────────────────────────────────
     st.markdown("#### Datos del producto")
 
-    cats = list(st.session_state.categories.keys())
+    cats = list(st.session_state.get("categories", {}).keys())
     default_cat = ai.get("categoria", cats[0]) if ai.get("categoria") in cats else cats[0]
     cat = st.selectbox("Categoría", cats, index=cats.index(default_cat))
 
-    subs = st.session_state.categories.get(cat, ["General"])
+    subs = st.session_state.get("categories", {}).get(cat, ["General"])
     ai_sub = ai.get("subcategoria", "")
     default_sub = ai_sub if ai_sub in subs else subs[0]
     sub = st.selectbox("Subcategoría", subs, index=subs.index(default_sub))
@@ -240,9 +240,9 @@ with tab_cargar:
                 "unit": unit, "cat": cat, "sub": sub,
                 "ts": datetime.now().isoformat()
             }
-            st.session_state.items.append(item)
-            st.session_state.ai_data = {}
-            st.session_state.last_photo = None
+            st.session_state["items"].append(item)
+            st.session_state["ai_data"] = {}
+            st.session_state["last_photo"] = None
 
             # Enviar a Google Sheet en background
             ok = write_to_sheet(item)
@@ -257,7 +257,7 @@ with tab_cargar:
 # TAB LISTA
 # ════════════════════════════════════════════════════════════
 with tab_lista:
-    if not st.session_state.items:
+    if not st.session_state.get("items", []):
         st.markdown("""
         <div style="text-align:center;padding:60px 0;color:#555">
           <div style="font-size:40px;margin-bottom:12px">🛒</div>
@@ -271,11 +271,11 @@ with tab_lista:
             <div class="total-label">Total de la compra</div>
             <div class="total-amount">{fmt_price(total())}</div>
           </div>
-          <div style="color:#555;font-size:13px">{len(st.session_state.items)} productos</div>
+          <div style="color:#555;font-size:13px">{len(st.session_state.get("items", []))} productos</div>
         </div>
         """, unsafe_allow_html=True)
 
-        for item in reversed(st.session_state.items):
+        for item in reversed(st.session_state.get("items", [])):
             col_info, col_del = st.columns([5, 1])
             with col_info:
                 st.markdown(f"""
@@ -294,12 +294,12 @@ with tab_lista:
                 """, unsafe_allow_html=True)
             with col_del:
                 if st.button("✕", key=f"del_{item['id']}"):
-                    st.session_state.items = [i for i in st.session_state.items if i["id"] != item["id"]]
+                    st.session_state["items"] = [i for i in st.session_state.get("items", []) if i["id"] != item["id"]]
                     st.rerun()
 
         st.markdown("---")
         if st.button("🗑️ Limpiar todo", type="secondary"):
-            st.session_state.items = []
+            st.session_state["items"] = []
             st.rerun()
 
 # ════════════════════════════════════════════════════════════
@@ -321,9 +321,9 @@ Ver el archivo `INSTRUCCIONES.md` incluido para el paso a paso completo.
 
     st.markdown("### 🏷️ Categorías y subcategorías")
 
-    for cat_name in list(st.session_state.categories.keys()):
+    for cat_name in list(st.session_state.get("categories", {}).keys()):
         with st.expander(f"📁 {cat_name}"):
-            subs = st.session_state.categories[cat_name]
+            subs = st.session_state["categories"][cat_name]
             st.write("Subcategorías: " + ", ".join(subs))
 
             new_sub = st.text_input(f"Nueva subcategoría en {cat_name}",
@@ -332,18 +332,18 @@ Ver el archivo `INSTRUCCIONES.md` incluido para el paso a paso completo.
             with col_add:
                 if st.button("+ Agregar subcategoría", key=f"as_{cat_name}"):
                     if new_sub and new_sub not in subs:
-                        st.session_state.categories[cat_name].append(new_sub)
+                        st.session_state["categories"][cat_name].append(new_sub)
                         st.rerun()
             with col_del:
                 if st.button("🗑️ Eliminar categoría", key=f"dc_{cat_name}"):
-                    del st.session_state.categories[cat_name]
+                    del st.session_state["categories"][cat_name]
                     st.rerun()
 
     st.markdown("---")
     new_cat = st.text_input("Nueva categoría", placeholder="Nombre de la nueva categoría...")
     if st.button("+ Agregar categoría"):
-        if new_cat and new_cat not in st.session_state.categories:
-            st.session_state.categories[new_cat] = ["General"]
+        if new_cat and new_cat not in st.session_state.get("categories", {}):
+            st.session_state["categories"][new_cat] = ["General"]
             st.rerun()
         elif new_cat:
             st.warning("Esa categoría ya existe.")

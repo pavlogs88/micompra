@@ -1,5 +1,6 @@
 import streamlit as st
-import google.generativeai as genai
+from groq import Groq
+import base64
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
@@ -134,13 +135,18 @@ def write_to_sheet(item):
         return False
 
 def analyze_image_with_gemini(image_bytes):
-    """Usa Gemini para extraer datos del producto desde la imagen."""
+    """Usa Groq para extraer datos del producto desde la imagen."""
     try:
-        gemini_key = st.secrets["GEMINI_API_KEY"]
-        genai.configure(api_key=gemini_key)
-        model = genai.GenerativeModel("gemini-2.0-flash")
+        groq_key = st.secrets["GROQ_API_KEY"]
+        client = Groq(api_key=groq_key)
 
+        # Convertir imagen a base64
         img = Image.open(io.BytesIO(image_bytes))
+        # Redimensionar si es muy grande para ahorrar tokens
+        img.thumbnail((1024, 1024))
+        buffer = io.BytesIO()
+        img.save(buffer, format="JPEG", quality=85)
+        img_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
         cats_str = ", ".join(st.session_state.get("categories", {}).keys())
         prompt = f"""Analizá esta imagen de una etiqueta o cartel de precio de supermercado argentino.
@@ -152,10 +158,19 @@ Formato exacto:
 Si un campo no se puede determinar con certeza, usá cadena vacía o 0.
 Respondé SOLO el JSON, nada más."""
 
-        response = model.generate_content([prompt, img])
-        text = response.text.strip()
+        response = client.chat.completions.create(
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
+                ]
+            }],
+            max_tokens=300
+        )
 
-        # Limpia posible markdown
+        text = response.choices[0].message.content.strip()
         text = re.sub(r"```json|```", "", text).strip()
         match = re.search(r"\{.*\}", text, re.DOTALL)
         if match:

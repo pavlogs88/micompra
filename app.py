@@ -66,19 +66,26 @@ DEFAULT_CATS = {
 }
 
 # ── Estado de sesión ─────────────────────────────────────────────────────────
-if "items"      not in st.session_state: st.session_state.items = []
-if "categories" not in st.session_state: st.session_state.categories = DEFAULT_CATS.copy()
-if "ai_data"    not in st.session_state: st.session_state.ai_data = {}
-if "last_photo" not in st.session_state: st.session_state.last_photo = None
+if "items"      not in st.session_state: st.session_state["items"] = []
+if "categories" not in st.session_state: st.session_state["categories"] = DEFAULT_CATS.copy()
+if "ai_data"    not in st.session_state: st.session_state["ai_data"] = {}
+if "last_photo" not in st.session_state: st.session_state["last_photo"] = None
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 def fmt_price(n):
-    return f"${n:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    try:
+        return f"${float(n):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    except Exception:
+        return "$0,00"
 
 def total():
-    if not st.session_state.items:
+    try:
+        items = st.session_state.get("items", [])
+        if not items or not isinstance(items, list):
+            return 0.0
+        return sum(float(i.get("price", 0)) * float(i.get("qty", 1)) for i in items)
+    except Exception:
         return 0.0
-    return sum(float(i.get("price", 0)) * int(i.get("qty", 1)) for i in st.session_state.items)
 
 def get_sheet():
     """Conecta con Google Sheets usando el archivo de credenciales."""

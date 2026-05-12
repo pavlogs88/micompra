@@ -76,7 +76,9 @@ def fmt_price(n):
     return f"${n:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def total():
-    return sum(i["price"] * i["qty"] for i in st.session_state.items)
+    if not st.session_state.items:
+        return 0.0
+    return sum(float(i.get("price", 0)) * int(i.get("qty", 1)) for i in st.session_state.items)
 
 def get_sheet():
     """Conecta con Google Sheets usando el archivo de credenciales."""

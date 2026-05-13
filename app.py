@@ -93,7 +93,6 @@ DEFAULT_CATS = {
 # ── Estado de sesión ─────────────────────────────────────────────────────────
 if "items"      not in st.session_state: st.session_state["items"] = []
 if "checked"    not in st.session_state: st.session_state["checked"] = {}
-if "categories" not in st.session_state: st.session_state["categories"] = DEFAULT_CATS.copy()
 if "ai_data"    not in st.session_state: st.session_state["ai_data"] = {}
 if "last_photo" not in st.session_state: st.session_state["last_photo"] = None
 if "page"       not in st.session_state: st.session_state["page"] = "cargar"
@@ -113,17 +112,86 @@ def total():
     except Exception:
         return 0.0
 
+@st.cache_resource
+def get_gspread_client():
+    """Crea el cliente de gspread una sola vez (cacheado)."""
+    creds_data = json.loads(st.secrets["GOOGLE_CREDS"])
+    scopes = ["https://www.googleapis.com/auth/spreadsheets",
+              "https://www.googleapis.com/auth/drive"]
+    creds = Credentials.from_service_account_info(creds_data, scopes=scopes)
+    return gspread.authorize(creds)
+
+def get_workbook():
+    gc = get_gspread_client()
+    return gc.open_by_key(st.secrets["SHEET_ID"])
+
 def get_sheet():
+    """Hoja principal de compras."""
     try:
-        creds_data = json.loads(st.secrets["GOOGLE_CREDS"])
-        scopes = ["https://www.googleapis.com/auth/spreadsheets",
-                  "https://www.googleapis.com/auth/drive"]
-        creds = Credentials.from_service_account_info(creds_data, scopes=scopes)
-        gc = gspread.authorize(creds)
-        return gc.open_by_key(st.secrets["SHEET_ID"]).sheet1
+        return get_workbook().sheet1
     except Exception as e:
         st.error(f"Error conectando con Google Sheets: {e}")
         return None
+
+def get_cat_sheet():
+    """Hoja de categorías. La crea si no existe."""
+    try:
+        wb = get_workbook()
+        try:
+            sh = wb.worksheet("Categorias")
+        except Exception:
+            sh = wb.add_worksheet(title="Categorias", rows=200, cols=2)
+            sh.append_row(["Categoria", "Subcategoria"])
+        return sh
+    except Exception as e:
+        st.error(f"Error con hoja Categorias: {e}")
+        return None
+
+@st.cache_data(ttl=30)
+def load_categories_from_sheet():
+    """Lee categorías del Sheet y las devuelve como dict. Cache 30s."""
+    try:
+        sh = get_cat_sheet()
+        if not sh:
+            return DEFAULT_CATS.copy()
+        rows = sh.get_all_values()
+        if len(rows) <= 1:
+            # Hoja vacía o solo encabezado → cargar defaults
+            save_categories_to_sheet(DEFAULT_CATS)
+            return DEFAULT_CATS.copy()
+        cats = {}
+        for row in rows[1:]:  # saltar encabezado
+            if len(row) >= 2 and row[0].strip():
+                cat = row[0].strip()
+                sub = row[1].strip()
+                if cat not in cats:
+                    cats[cat] = []
+                if sub and sub not in cats[cat]:
+                    cats[cat].append(sub)
+        return cats if cats else DEFAULT_CATS.copy()
+    except Exception:
+        return DEFAULT_CATS.copy()
+
+def save_categories_to_sheet(cats_dict):
+    """Reescribe toda la hoja Categorias con el dict actual."""
+    try:
+        sh = get_cat_sheet()
+        if not sh:
+            return False
+        sh.clear()
+        rows = [["Categoria", "Subcategoria"]]
+        for cat, subs in cats_dict.items():
+            if subs:
+                for sub in subs:
+                    rows.append([cat, sub])
+            else:
+                rows.append([cat, ""])
+        sh.update("A1", rows)
+        load_categories_from_sheet.clear()  # limpiar cache
+        return True
+    except Exception as e:
+        st.error(f"Error guardando categorías: {e}")
+        return False
 
 def write_to_sheet(item):
     sheet = get_sheet()
@@ -152,7 +220,7 @@ def analyze_image_with_gemini(image_bytes):
         buffer = io.BytesIO()
         img.save(buffer, format="JPEG", quality=85)
         img_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
-        cats_str = ", ".join(st.session_state.get("categories", {}).keys())
+        cats_str = ", ".join(load_categories_from_sheet().keys())
         prompt = f"""Analizá esta imagen de una etiqueta o cartel de precio de supermercado argentino.
 Extraé la información visible y respondé SOLO con un JSON válido, sin texto adicional ni markdown.
 Formato exacto:
@@ -252,7 +320,8 @@ if page == "cargar":
     ai = st.session_state.get("ai_data", {})
 
     st.markdown("#### Datos del producto")
-    cats = list(st.session_state.get("categories", {}).keys())
+    cats_dict = load_categories_from_sheet()
+    cats = list(cats_dict.keys())
     if not cats:
         st.warning("No hay categorías. Agregá una en Config.")
         st.stop()
@@ -260,7 +329,7 @@ if page == "cargar":
     default_cat = ai.get("categoria") if ai.get("categoria") in cats else cats[0]
     cat = st.selectbox("Categoría", cats, index=cats.index(default_cat))
 
-    subs = st.session_state.get("categories", {}).get(cat, ["General"])
+    subs = cats_dict.get(cat, ["General"])
     if not subs: subs = ["General"]
     ai_sub = ai.get("subcategoria", "")
     default_sub = ai_sub if ai_sub in subs else subs[0]
@@ -387,7 +456,7 @@ elif page == "config":
     st.markdown("### ⚙️ Categorías y subcategorías")
     st.caption("Los cambios aplican en el formulario de carga inmediatamente.")
 
-    cats_dict = st.session_state.get("categories", {})
+    cats_dict = load_categories_from_sheet()
 
     # ── Agregar nueva categoría ──────────────────────────────
     with st.expander("➕ Agregar nueva categoría", expanded=False):
@@ -399,9 +468,10 @@ elif page == "config":
             elif nc in cats_dict:
                 st.warning(f"Ya existe '{nc}'.")
             else:
-                st.session_state["categories"][nc] = []
-                st.success(f"✓ Categoría '{nc}' creada.")
-                st.rerun()
+                cats_dict[nc] = []
+                if save_categories_to_sheet(cats_dict):
+                    st.success(f"✓ Categoría '{nc}' creada y guardada.")
+                    st.rerun()
 
     st.markdown("---")
 
@@ -421,7 +491,8 @@ elif page == "config":
                             st.markdown(f"• {sub}")
                         with c2:
                             if st.button("✕", key=f"delsub_{cat_name}_{sub}"):
-                                st.session_state["categories"][cat_name].remove(sub)
+                                cats_dict[cat_name].remove(sub)
+                                save_categories_to_sheet(cats_dict)
                                 st.rerun()
                 else:
                     st.caption("Sin subcategorías todavía.")
@@ -442,8 +513,9 @@ elif page == "config":
                         elif ns in subs:
                             st.warning("Ya existe.")
                         else:
-                            st.session_state["categories"][cat_name].append(ns)
-                            st.rerun()
+                            cats_dict[cat_name].append(ns)
+                            if save_categories_to_sheet(cats_dict):
+                                st.rerun()
 
                 st.markdown("")
 
@@ -458,13 +530,14 @@ elif page == "config":
                         rv = rename_val.strip()
                         if rv and rv != cat_name and rv not in cats_dict:
                             new_cats = {(rv if k == cat_name else k): v for k, v in cats_dict.items()}
-                            st.session_state["categories"] = new_cats
-                            st.rerun()
+                            if save_categories_to_sheet(new_cats):
+                                st.rerun()
 
                 st.markdown("")
 
                 # Eliminar categoría
                 if st.button(f"🗑️ Eliminar '{cat_name}'", key=f"dc_{cat_name}",
                              use_container_width=True):
-                    del st.session_state["categories"][cat_name]
-                    st.rerun()
+                    del cats_dict[cat_name]
+                    if save_categories_to_sheet(cats_dict):
+                        st.rerun()

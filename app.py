@@ -134,15 +134,16 @@ def get_sheet():
         return None
 
 def get_cat_sheet():
-    """Hoja de categorías. La crea si no existe."""
+    """Hoja de categorias. La crea si no existe."""
     try:
         wb = get_workbook()
-        try:
-            sh = wb.worksheet("Categorias")
-        except Exception:
+        sheets = [s.title for s in wb.worksheets()]
+        if "Categorias" in sheets:
+            return wb.worksheet("Categorias")
+        else:
             sh = wb.add_worksheet(title="Categorias", rows=200, cols=2)
             sh.append_row(["Categoria", "Subcategoria"])
-        return sh
+            return sh
     except Exception as e:
         st.error(f"Error con hoja Categorias: {e}")
         return None

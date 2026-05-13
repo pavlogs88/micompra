@@ -32,22 +32,7 @@ st.markdown("""
     border-radius: 10px !important;
   }
 
-  /* Barra de navegación inferior */
-  .nav-bar {
-    position: fixed; bottom: 0; left: 0; right: 0;
-    background: #111; border-top: 1px solid #2a2a2a;
-    display: flex; z-index: 999; max-width: 480px; margin: 0 auto;
-  }
-  .nav-btn {
-    flex: 1; padding: 10px 4px 8px; border: none; background: transparent;
-    color: #555; font-size: 10px; cursor: pointer;
-    display: flex; flex-direction: column; align-items: center; gap: 3px;
-    font-family: inherit;
-  }
-  .nav-btn.active { color: #3ddc84; }
-  .nav-btn .nav-icon { font-size: 20px; line-height: 1; }
-
-  /* Tarjeta total */
+    /* Tarjeta total */
   .total-box {
     background: #1a1a1a; border: 1px solid #3ddc84;
     border-radius: 12px; padding: 14px 18px;
@@ -407,28 +392,7 @@ _list_items = load_list_from_sheet()
 n_items = len(_list_items)
 n_checked = sum(1 for i in _list_items if i.get("tildado", False))
 
-# Barra inferior fija
-st.markdown(f"""
-<div class="nav-bar">
-  <button class="nav-btn {'active' if page=='cargar' else ''}" onclick="window.location.href='?page=cargar'">
-    <span class="nav-icon">🛒</span>Cargar
-  </button>
-  <button class="nav-btn {'active' if page=='lista' else ''}" onclick="window.location.href='?page=lista'">
-    <span class="nav-icon">📋</span>Lista ({n_items})
-  </button>
-  <button class="nav-btn {'active' if page=='config' else ''}" onclick="window.location.href='?page=config'">
-    <span class="nav-icon">⚙️</span>Config
-  </button>
-</div>
-""", unsafe_allow_html=True)
-
-# Leer page desde query params
-params = st.query_params
-if "page" in params:
-    st.session_state["page"] = params["page"]
-    page = params["page"]
-
-# Botones de navegación reales (visibles arriba)
+# Botones de navegación
 col1, col2, col3 = st.columns(3)
 with col1:
     if st.button("🛒 Cargar", use_container_width=True,

@@ -20,7 +20,7 @@ st.set_page_config(
 # ── CSS ──────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-  .block-container { padding-top: 0.5rem; padding-bottom: 6rem; max-width: 480px; }
+  .block-container { padding-top: 0.5rem; padding-bottom: 7rem; max-width: 480px; }
 
   /* Botón primario verde */
   div[data-testid="stButton"] > button[kind="primary"] {
@@ -392,45 +392,6 @@ _list_items = load_list_from_sheet()
 n_items = len(_list_items)
 n_checked = sum(1 for i in _list_items if i.get("tildado", False))
 
-# ── Botones de navegación (se posicionan abajo con CSS) ──────────────────────
-st.markdown('<div id="bottom-nav-anchor">', unsafe_allow_html=True)
-col1, col2, col3 = st.columns(3)
-with col1:
-    if st.button("🛒 Cargar", use_container_width=True, key="nav_cargar",
-                 type="primary" if page=="cargar" else "secondary"):
-        st.session_state["page"] = "cargar"
-        st.rerun()
-with col2:
-    if st.button(f"📋 Lista ({n_items})", use_container_width=True, key="nav_lista",
-                 type="primary" if page=="lista" else "secondary"):
-        st.session_state["page"] = "lista"
-        st.rerun()
-with col3:
-    if st.button("⚙️ Config", use_container_width=True, key="nav_config",
-                 type="primary" if page=="config" else "secondary"):
-        st.session_state["page"] = "config"
-        st.rerun()
-st.markdown('</div>', unsafe_allow_html=True)
-
-# CSS que fija la barra de nav al fondo
-st.markdown("""
-<style>
-  /* Fija el bloque de navegación al fondo de la pantalla */
-  div[data-testid="stHorizontalBlock"]:has(button[key="nav_cargar"]) {
-    position: fixed !important;
-    bottom: 0 !important;
-    left: 0 !important;
-    right: 0 !important;
-    z-index: 9999 !important;
-    background: #111 !important;
-    border-top: 1px solid #2a2a2a !important;
-    padding: 8px 12px 12px 12px !important;
-    margin: 0 !important;
-    max-width: 100% !important;
-  }
-</style>
-""", unsafe_allow_html=True)
-
 st.markdown("---")
 
 # ════════════════════════════════════════════════════════════
@@ -762,3 +723,51 @@ elif page == "config":
                     del cats_dict[cat_name]
                     if save_categories_to_sheet(cats_dict):
                         st.rerun()
+
+# ════════════════════════════════════════════════════════════
+# BARRA DE NAVEGACIÓN FIJA (siempre al final del DOM)
+# ════════════════════════════════════════════════════════════
+st.markdown('<div id="nav-bar-wrapper">', unsafe_allow_html=True)
+nav_col1, nav_col2, nav_col3 = st.columns(3)
+with nav_col1:
+    if st.button("🛒 Cargar", use_container_width=True, key="nav_cargar",
+                 type="primary" if page=="cargar" else "secondary"):
+        st.session_state["page"] = "cargar"
+        st.rerun()
+with nav_col2:
+    if st.button(f"📋 Lista ({n_items})", use_container_width=True, key="nav_lista",
+                 type="primary" if page=="lista" else "secondary"):
+        st.session_state["page"] = "lista"
+        st.rerun()
+with nav_col3:
+    if st.button("⚙️ Config", use_container_width=True, key="nav_config",
+                 type="primary" if page=="config" else "secondary"):
+        st.session_state["page"] = "config"
+        st.rerun()
+st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown("""
+<style>
+  /* La barra de nav ocupa el ancho completo fijada abajo */
+  #nav-bar-wrapper {
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    z-index: 99999 !important;
+    background: #111111 !important;
+    border-top: 1px solid #2a2a2a !important;
+    padding: 8px 12px 14px 12px !important;
+  }
+  /* El div de columnas que Streamlit genera dentro del wrapper */
+  #nav-bar-wrapper > div[data-testid="stHorizontalBlock"] {
+    max-width: 480px !important;
+    margin: 0 auto !important;
+  }
+  /* Ajuste de botones dentro de la nav */
+  #nav-bar-wrapper button {
+    font-size: 0.85rem !important;
+    padding: 0.4rem 0.2rem !important;
+  }
+</style>
+""", unsafe_allow_html=True)

@@ -91,8 +91,6 @@ DEFAULT_CATS = {
 }
 
 # ── Estado de sesión ─────────────────────────────────────────────────────────
-if "items"      not in st.session_state: st.session_state["items"] = []
-if "checked"    not in st.session_state: st.session_state["checked"] = {}
 if "ai_data"    not in st.session_state: st.session_state["ai_data"] = {}
 if "last_photo" not in st.session_state: st.session_state["last_photo"] = None
 if "page"       not in st.session_state: st.session_state["page"] = "cargar"
@@ -104,9 +102,10 @@ def fmt_price(n):
     except Exception:
         return "$0,00"
 
-def total():
+def total(items=None):
     try:
-        items = st.session_state.get("items", [])
+        if items is None:
+            items = load_list_from_sheet()
         if not items: return 0.0
         return sum(float(i.get("price", 0)) * float(i.get("qty", 1)) for i in items)
     except Exception:
@@ -126,12 +125,141 @@ def get_workbook():
     return gc.open_by_key(st.secrets["SHEET_ID"])
 
 def get_sheet():
-    """Hoja principal de compras."""
+    """Hoja principal de compras (historial)."""
     try:
         return get_workbook().sheet1
     except Exception as e:
         st.error(f"Error conectando con Google Sheets: {e}")
         return None
+
+def get_list_sheet():
+    """Hoja Lista - compra actual compartida."""
+    try:
+        wb = get_workbook()
+        sheets = [s.title for s in wb.worksheets()]
+        if "Lista" in sheets:
+            return wb.worksheet("Lista")
+        else:
+            sh = wb.add_worksheet(title="Lista", rows=200, cols=11)
+            sh.append_row(["id","Fecha","Hora","Categoria","Subcategoria",
+                           "Descripcion","Cantidad","Unidad","Precio Unitario","Total","Tildado"])
+            return sh
+    except Exception as e:
+        st.error(f"Error con hoja Lista: {e}")
+        return None
+
+@st.cache_data(ttl=10)
+def load_list_from_sheet():
+    """Lee productos de la hoja Lista. Cache 10s."""
+    try:
+        sh = get_list_sheet()
+        if not sh:
+            return []
+        rows = sh.get_all_values()
+        if len(rows) <= 1:
+            return []
+        items = []
+        for i, row in enumerate(rows[1:], start=2):
+            if len(row) >= 10 and row[0].strip():
+                items.append({
+                    "id": row[0].strip(),
+                    "desc": row[5].strip() if len(row) > 5 else "",
+                    "cat": row[3].strip() if len(row) > 3 else "",
+                    "sub": row[4].strip() if len(row) > 4 else "",
+                    "qty": float(row[6]) if len(row) > 6 and row[6] else 1,
+                    "unit": row[7].strip() if len(row) > 7 else "unidad",
+                    "price": float(row[8]) if len(row) > 8 and row[8] else 0,
+                    "total": float(row[9]) if len(row) > 9 and row[9] else 0,
+                    "tildado": row[10].strip().upper() == "SI" if len(row) > 10 else False,
+                    "row": i
+                })
+        return items
+    except Exception as e:
+        return []
+
+def add_to_list_sheet(item):
+    """Agrega un producto a la hoja Lista."""
+    sh = get_list_sheet()
+    if not sh: return False
+    try:
+        now = datetime.now()
+        sh.append_row([
+            item["id"],
+            now.strftime("%d/%m/%Y"),
+            now.strftime("%H:%M"),
+            item["cat"], item["sub"], item["desc"],
+            item["qty"], item["unit"], item["price"],
+            round(item["price"] * item["qty"], 2),
+            "NO"
+        ])
+        load_list_from_sheet.clear()
+        return True
+    except Exception as e:
+        st.error(f"Error agregando a Lista: {e}")
+        return False
+
+def toggle_tildado(item_id, tildado):
+    """Cambia el estado tildado de un item en la hoja Lista."""
+    try:
+        sh = get_list_sheet()
+        if not sh: return False
+        rows = sh.get_all_values()
+        for i, row in enumerate(rows[1:], start=2):
+            if row[0].strip() == str(item_id):
+                sh.update_cell(i, 11, "SI" if tildado else "NO")
+                load_list_from_sheet.clear()
+                return True
+        return False
+    except Exception as e:
+        st.error(f"Error actualizando estado: {e}")
+        return False
+
+def delete_from_list(item_id):
+    """Elimina un item de la hoja Lista."""
+    try:
+        sh = get_list_sheet()
+        if not sh: return False
+        rows = sh.get_all_values()
+        for i, row in enumerate(rows[1:], start=2):
+            if row[0].strip() == str(item_id):
+                sh.delete_rows(i)
+                load_list_from_sheet.clear()
+                return True
+        return False
+    except Exception as e:
+        st.error(f"Error eliminando item: {e}")
+        return False
+
+def finish_shopping():
+    """Pasa todos los items de Lista a Compras y limpia Lista."""
+    try:
+        list_sh = get_list_sheet()
+        main_sh = get_sheet()
+        if not list_sh or not main_sh: return False
+
+        # Verificar encabezados en hoja principal
+        if main_sh.row_count == 0 or not main_sh.row_values(1):
+            main_sh.append_row(["Fecha","Hora","Categoría","Subcategoría",
+                                 "Descripción","Cantidad","Unidad","Precio Unitario","Total"])
+
+        # Copiar todos los items a hoja principal
+        rows = list_sh.get_all_values()
+        for row in rows[1:]:
+            if len(row) >= 10 and row[0].strip():
+                main_sh.append_row([
+                    row[1], row[2], row[3], row[4],
+                    row[5], row[6], row[7], row[8], row[9]
+                ])
+
+        # Limpiar hoja Lista (dejar solo encabezado)
+        list_sh.clear()
+        list_sh.append_row(["id","Fecha","Hora","Categoria","Subcategoria",
+                            "Descripcion","Cantidad","Unidad","Precio Unitario","Total","Tildado"])
+        load_list_from_sheet.clear()
+        return True
+    except Exception as e:
+        st.error(f"Error finalizando compra: {e}")
+        return False
 
 def get_cat_sheet():
     """Hoja de categorias. La crea si no existe."""
@@ -195,23 +323,8 @@ def save_categories_to_sheet(cats_dict):
         return False
 
 def write_to_sheet(item):
-    sheet = get_sheet()
-    if not sheet: return False
-    try:
-        if sheet.row_count == 0 or not sheet.row_values(1):
-            sheet.append_row(["Fecha","Hora","Categoría","Subcategoría",
-                              "Descripción","Cantidad","Unidad","Precio Unitario","Total"])
-        now = datetime.now()
-        sheet.append_row([
-            now.strftime("%d/%m/%Y"), now.strftime("%H:%M"),
-            item["cat"], item["sub"], item["desc"],
-            item["qty"], item["unit"], item["price"],
-            round(item["price"] * item["qty"], 2)
-        ])
-        return True
-    except Exception as e:
-        st.error(f"Error escribiendo en Sheet: {e}")
-        return False
+    """Escribe en hoja Lista (compra actual)."""
+    return add_to_list_sheet(item)
 
 def analyze_image_with_gemini(image_bytes):
     try:
@@ -246,8 +359,9 @@ Si un campo no se puede determinar con certeza, usá cadena vacía o 0. Respond�
 
 # ── Navegación ────────────────────────────────────────────────────────────────
 page = st.session_state["page"]
-n_items = len(st.session_state.get("items", []))
-n_checked = sum(1 for v in st.session_state.get("checked", {}).values() if v)
+_list_items = load_list_from_sheet()
+n_items = len(_list_items)
+n_checked = sum(1 for i in _list_items if i.get("tildado", False))
 
 # Barra inferior fija
 st.markdown(f"""
@@ -295,13 +409,16 @@ st.markdown("---")
 # ════════════════════════════════════════════════════════════
 if page == "cargar":
 
+    _items_now = load_list_from_sheet()
+    _total_now = total(_items_now)
+    _checked_now = sum(1 for i in _items_now if i.get("tildado", False))
     st.markdown(f"""
     <div class="total-box">
       <div>
         <div class="total-label">Total estimado</div>
-        <div class="total-amount">{fmt_price(total())}</div>
+        <div class="total-amount">{fmt_price(_total_now)}</div>
       </div>
-      <div style="color:#555;font-size:13px">{n_items} productos · {n_checked} ✓</div>
+      <div style="color:#555;font-size:13px">{len(_items_now)} productos · {_checked_now} ✓</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -359,18 +476,16 @@ if page == "cargar":
             st.error("Ingresá un precio válido.")
         else:
             item = {
-                "id": int(datetime.now().timestamp() * 1000),
+                "id": str(int(datetime.now().timestamp() * 1000)),
                 "desc": desc, "price": price, "qty": qty,
                 "unit": unit, "cat": cat, "sub": sub,
-                "ts": datetime.now().isoformat()
             }
-            st.session_state["items"].append(item)
+            ok = write_to_sheet(item)
             st.session_state["ai_data"] = {}
             st.session_state["last_photo"] = None
-            ok = write_to_sheet(item)
             subtotal = price * qty
             msg = f"✓ {desc} — {fmt_price(subtotal)}"
-            if ok: msg += " · Guardado en Sheets ✓"
+            if ok: msg += " · Guardado en Lista ✓"
             st.success(msg)
             st.rerun()
 
@@ -379,8 +494,12 @@ if page == "cargar":
 # ════════════════════════════════════════════════════════════
 elif page == "lista":
 
-    items = st.session_state.get("items", [])
-    checked = st.session_state.get("checked", {})
+    # Auto-refresh cada 15 segundos
+    st.markdown("""
+    <script>setTimeout(function(){window.location.reload()}, 15000);</script>
+    """, unsafe_allow_html=True)
+
+    items = load_list_from_sheet()
 
     if not items:
         st.markdown("""
@@ -390,13 +509,13 @@ elif page == "lista":
         </div>
         """, unsafe_allow_html=True)
     else:
-        # Totales
-        total_val = total()
+        total_val = total(items)
         total_check = sum(
             float(i.get("price",0)) * float(i.get("qty",1))
-            for i in items if checked.get(str(i["id"]), False)
+            for i in items if i.get("tildado", False)
         )
         total_pend = total_val - total_check
+        n_til = sum(1 for i in items if i.get("tildado", False))
 
         col_t1, col_t2, col_t3 = st.columns(3)
         with col_t1:
@@ -407,19 +526,19 @@ elif page == "lista":
             st.metric("⏳ Pendiente", fmt_price(total_pend))
 
         st.markdown("---")
-        st.caption(f"{n_checked} de {n_items} productos tildados")
+        st.caption(f"{n_til} de {len(items)} productos tildados · se actualiza cada 15s")
 
         # Lista con checkboxes
         for item in items:
-            item_id = str(item["id"])
-            is_checked = checked.get(item_id, False)
+            item_id = item["id"]
+            is_checked = item.get("tildado", False)
 
             col_chk, col_info, col_del = st.columns([1, 6, 1])
 
             with col_chk:
                 new_val = st.checkbox("", value=is_checked, key=f"chk_{item_id}")
                 if new_val != is_checked:
-                    st.session_state["checked"][item_id] = new_val
+                    toggle_tildado(item_id, new_val)
                     st.rerun()
 
             with col_info:
@@ -438,17 +557,21 @@ elif page == "lista":
                 """, unsafe_allow_html=True)
 
             with col_del:
-                if st.button("✕", key=f"del_{item['id']}"):
-                    st.session_state["items"] = [i for i in items if i["id"] != item["id"]]
-                    if item_id in st.session_state["checked"]:
-                        del st.session_state["checked"][item_id]
+                if st.button("✕", key=f"del_{item_id}"):
+                    delete_from_list(item_id)
                     st.rerun()
 
         st.markdown("---")
-        if st.button("🗑️ Limpiar todo", use_container_width=True):
-            st.session_state["items"] = []
-            st.session_state["checked"] = {}
-            st.rerun()
+        col_fin, col_clear = st.columns(2)
+        with col_fin:
+            if st.button("✅ Finalizar compra", use_container_width=True, type="primary"):
+                if finish_shopping():
+                    st.success("¡Compra finalizada! Los productos se guardaron en el historial.")
+                    st.rerun()
+        with col_clear:
+            if st.button("🗑️ Limpiar lista", use_container_width=True):
+                if finish_shopping():
+                    st.rerun()
 
 # ════════════════════════════════════════════════════════════
 # PÁGINA: CONFIG

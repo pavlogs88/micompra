@@ -91,9 +91,10 @@ DEFAULT_CATS = {
 }
 
 # ── Estado de sesión ─────────────────────────────────────────────────────────
-if "ai_data"    not in st.session_state: st.session_state["ai_data"] = {}
-if "last_photo" not in st.session_state: st.session_state["last_photo"] = None
-if "page"       not in st.session_state: st.session_state["page"] = "cargar"
+if "ai_data"      not in st.session_state: st.session_state["ai_data"] = {}
+if "last_photo"   not in st.session_state: st.session_state["last_photo"] = None
+if "page"         not in st.session_state: st.session_state["page"] = "cargar"
+if "editing_item" not in st.session_state: st.session_state["editing_item"] = None
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 def fmt_price(n):
@@ -160,7 +161,10 @@ def load_list_from_sheet():
             return []
         items = []
         for i, row in enumerate(rows[1:], start=2):
-            if len(row) >= 10 and row[0].strip():
+            if len(row) >= 6 and row[0].strip():
+                price = 0.0
+                try: price = float(row[8]) if len(row) > 8 and row[8] else 0.0
+                except: pass
                 items.append({
                     "id": row[0].strip(),
                     "desc": row[5].strip() if len(row) > 5 else "",
@@ -168,9 +172,10 @@ def load_list_from_sheet():
                     "sub": row[4].strip() if len(row) > 4 else "",
                     "qty": float(row[6]) if len(row) > 6 and row[6] else 1,
                     "unit": row[7].strip() if len(row) > 7 else "unidad",
-                    "price": float(row[8]) if len(row) > 8 and row[8] else 0,
-                    "total": float(row[9]) if len(row) > 9 and row[9] else 0,
+                    "price": price,
+                    "total": round(price * (float(row[6]) if len(row) > 6 and row[6] else 1), 2),
                     "tildado": row[10].strip().upper() == "SI" if len(row) > 10 else False,
+                    "actualizado": row[11].strip().upper() == "SI" if len(row) > 11 else False,
                     "row": i
                 })
         return items
@@ -189,8 +194,9 @@ def add_to_list_sheet(item):
             now.strftime("%H:%M"),
             item["cat"], item["sub"], item["desc"],
             item["qty"], item["unit"], item["price"],
-            round(item["price"] * item["qty"], 2),
-            "NO"
+            round(float(item["price"]) * float(item["qty"]), 2),
+            "NO",
+            "SI" if float(item.get("price", 0)) > 0 else "NO"
         ])
         load_list_from_sheet.clear()
         return True
@@ -230,6 +236,44 @@ def delete_from_list(item_id):
         st.error(f"Error eliminando item: {e}")
         return False
 
+def get_last_price(desc):
+    """Busca el último precio conocido de un producto en el historial."""
+    try:
+        sh = get_sheet()
+        if not sh: return None
+        rows = sh.get_all_values()
+        last_price = None
+        for row in rows[1:]:
+            if len(row) >= 9 and row[4].strip().lower() == desc.strip().lower():
+                try:
+                    last_price = float(row[7])
+                except: pass
+        return last_price
+    except:
+        return None
+
+def update_price_in_list(item_id, new_price, new_qty, new_unit):
+    """Actualiza precio, cantidad y unidad de un item en la hoja Lista."""
+    try:
+        sh = get_list_sheet()
+        if not sh: return False
+        rows = sh.get_all_values()
+        for i, row in enumerate(rows[1:], start=2):
+            if row[0].strip() == str(item_id):
+                qty = float(new_qty)
+                price = float(new_price)
+                sh.update_cell(i, 7, qty)
+                sh.update_cell(i, 8, new_unit)
+                sh.update_cell(i, 9, price)
+                sh.update_cell(i, 10, round(price * qty, 2))
+                sh.update_cell(i, 12, "SI")  # Actualizado = SI
+                load_list_from_sheet.clear()
+                return True
+        return False
+    except Exception as e:
+        st.error(f"Error actualizando precio: {e}")
+        return False
+
 def finish_shopping():
     """Pasa todos los items de Lista a Compras y limpia Lista."""
     try:
@@ -254,7 +298,7 @@ def finish_shopping():
         # Limpiar hoja Lista (dejar solo encabezado)
         list_sh.clear()
         list_sh.append_row(["id","Fecha","Hora","Categoria","Subcategoria",
-                            "Descripcion","Cantidad","Unidad","Precio Unitario","Total","Tildado"])
+                            "Descripcion","Cantidad","Unidad","Precio Unitario","Total","Tildado","Actualizado"])
         load_list_from_sheet.clear()
         return True
     except Exception as e:
@@ -494,84 +538,152 @@ if page == "cargar":
 # ════════════════════════════════════════════════════════════
 elif page == "lista":
 
-    # Auto-refresh cada 15 segundos
-    st.markdown("""
-    <script>setTimeout(function(){window.location.reload()}, 15000);</script>
-    """, unsafe_allow_html=True)
+    # Auto-refresh cada 15 segundos (solo si no hay formulario abierto)
+    if not st.session_state["editing_item"]:
+        st.markdown("""
+        <script>setTimeout(function(){window.location.reload()}, 15000);</script>
+        """, unsafe_allow_html=True)
 
     items = load_list_from_sheet()
 
-    if not items:
-        st.markdown("""
-        <div style="text-align:center;padding:60px 0;color:#555">
-          <div style="font-size:40px;margin-bottom:12px">🛒</div>
-          <div>Todavía no cargaste productos.</div>
-        </div>
-        """, unsafe_allow_html=True)
+    # ── Formulario de edición de precio ─────────────────────
+    if st.session_state["editing_item"]:
+        edit = st.session_state["editing_item"]
+        st.markdown(f"### ✏️ Actualizar precio")
+        st.markdown(f"**{edit['desc']}**")
+
+        # Sugerir último precio conocido del historial
+        last_price = get_last_price(edit['desc'])
+        if last_price and edit['price'] == 0:
+            st.info(f"💡 Último precio registrado: {fmt_price(last_price)}")
+
+        default_price = last_price if (last_price and edit['price'] == 0) else edit['price']
+        units = ["unidad", "kg", "100g", "L"]
+        unit_idx = units.index(edit['unit']) if edit['unit'] in units else 0
+
+        e_price = st.number_input("Precio unitario ($)", min_value=0.0,
+                                   value=float(default_price or 0),
+                                   step=10.0, format="%.2f", key="edit_price")
+        e_qty   = st.number_input("Cantidad", min_value=1,
+                                   value=int(edit['qty']), step=1, key="edit_qty")
+        e_unit  = st.radio("Unidad", units, index=unit_idx, horizontal=True, key="edit_unit")
+
+        # Foto opcional
+        st.markdown("📷 Opcional: fotografiá la etiqueta para autocompletar")
+        edit_photo = st.camera_input("Foto etiqueta", label_visibility="collapsed", key="edit_cam")
+        if edit_photo:
+            with st.spinner("Analizando..."):
+                ai = analyze_image_with_gemini(edit_photo.getvalue())
+                if ai.get("precio"):
+                    st.success(f"IA detectó precio: {fmt_price(ai['precio'])} — aplicalo abajo si es correcto")
+                    st.session_state["ai_price_suggestion"] = float(ai["precio"])
+
+        if "ai_price_suggestion" in st.session_state:
+            if st.button(f"Usar precio de IA: {fmt_price(st.session_state['ai_price_suggestion'])}"):
+                st.session_state["edit_price"] = st.session_state["ai_price_suggestion"]
+                del st.session_state["ai_price_suggestion"]
+                st.rerun()
+
+        col_ok, col_cancel = st.columns(2)
+        with col_ok:
+            if st.button("✓ Guardar", type="primary", use_container_width=True):
+                if e_price <= 0:
+                    st.error("Ingresá un precio válido.")
+                else:
+                    if update_price_in_list(edit["id"], e_price, e_qty, e_unit):
+                        st.session_state["editing_item"] = None
+                        st.session_state.pop("ai_price_suggestion", None)
+                        st.rerun()
+        with col_cancel:
+            if st.button("Cancelar", use_container_width=True):
+                st.session_state["editing_item"] = None
+                st.session_state.pop("ai_price_suggestion", None)
+                st.rerun()
+
     else:
-        total_val = total(items)
-        total_check = sum(
-            float(i.get("price",0)) * float(i.get("qty",1))
-            for i in items if i.get("tildado", False)
-        )
-        total_pend = total_val - total_check
-        n_til = sum(1 for i in items if i.get("tildado", False))
+        # ── Vista normal de la lista ─────────────────────────
+        if not items:
+            st.markdown("""
+            <div style="text-align:center;padding:60px 0;color:#555">
+              <div style="font-size:40px;margin-bottom:12px">🛒</div>
+              <div>La lista está vacía.<br>Agregá productos desde "Cargar"<br>o escribilos directamente en la hoja Lista del Sheet.</div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            total_val = total(items)
+            total_check = sum(
+                float(i.get("price",0)) * float(i.get("qty",1))
+                for i in items if i.get("tildado", False)
+            )
+            total_pend = total_val - total_check
+            n_til = sum(1 for i in items if i.get("tildado", False))
+            sin_precio = sum(1 for i in items if i.get("price", 0) == 0)
 
-        col_t1, col_t2, col_t3 = st.columns(3)
-        with col_t1:
-            st.metric("Total", fmt_price(total_val))
-        with col_t2:
-            st.metric("✓ En changuito", fmt_price(total_check))
-        with col_t3:
-            st.metric("⏳ Pendiente", fmt_price(total_pend))
+            col_t1, col_t2, col_t3 = st.columns(3)
+            with col_t1:
+                st.metric("Total", fmt_price(total_val))
+            with col_t2:
+                st.metric("✓ En changuito", fmt_price(total_check))
+            with col_t3:
+                st.metric("⏳ Pendiente", fmt_price(total_pend))
 
-        st.markdown("---")
-        st.caption(f"{n_til} de {len(items)} productos tildados · se actualiza cada 15s")
+            if sin_precio > 0:
+                st.warning(f"⚠️ {sin_precio} producto{'s' if sin_precio>1 else ''} sin precio — tocá ✏️ para actualizar")
 
-        # Lista con checkboxes
-        for item in items:
-            item_id = item["id"]
-            is_checked = item.get("tildado", False)
+            st.markdown("---")
+            st.caption(f"{n_til} de {len(items)} tildados · se actualiza cada 15s")
 
-            col_chk, col_info, col_del = st.columns([1, 6, 1])
+            for item in items:
+                item_id = item["id"]
+                is_checked = item.get("tildado", False)
+                sin_precio_item = item.get("price", 0) == 0
 
-            with col_chk:
-                new_val = st.checkbox("", value=is_checked, key=f"chk_{item_id}")
-                if new_val != is_checked:
-                    toggle_tildado(item_id, new_val)
-                    st.rerun()
+                col_chk, col_info, col_edit, col_del = st.columns([1, 5, 1, 1])
 
-            with col_info:
-                name_style = "item-done" if is_checked else ""
-                st.markdown(f"""
-                <div class="item-row" style="margin-bottom:2px">
-                  <div class="item-name {name_style}">{item['desc']}</div>
-                  <div style="display:flex;justify-content:space-between;align-items:center">
-                    <div class="item-meta">
-                      <span class="tag">{item['cat']}</span>
-                      <span class="tag">{item['qty']} {item['unit']}</span>
+                with col_chk:
+                    new_val = st.checkbox("", value=is_checked, key=f"chk_{item_id}")
+                    if new_val != is_checked:
+                        toggle_tildado(item_id, new_val)
+                        st.rerun()
+
+                with col_info:
+                    name_style = "item-done" if is_checked else ""
+                    price_display = fmt_price(item['price'] * item['qty']) if not sin_precio_item else "sin precio"
+                    price_color = "#3ddc84" if not sin_precio_item else "#f5a623"
+                    st.markdown(f"""
+                    <div class="item-row" style="margin-bottom:2px">
+                      <div class="item-name {name_style}">{item['desc']}</div>
+                      <div style="display:flex;justify-content:space-between;align-items:center">
+                        <div class="item-meta">
+                          <span class="tag">{item['qty']} {item['unit']}</span>
+                        </div>
+                        <div style="color:{price_color};font-weight:700;font-family:monospace;font-size:14px">{price_display}</div>
+                      </div>
                     </div>
-                    <div class="item-price">{fmt_price(item['price'] * item['qty'])}</div>
-                  </div>
-                </div>
-                """, unsafe_allow_html=True)
+                    """, unsafe_allow_html=True)
 
-            with col_del:
-                if st.button("✕", key=f"del_{item_id}"):
-                    delete_from_list(item_id)
-                    st.rerun()
+                with col_edit:
+                    edit_label = "✏️" if not sin_precio_item else "💲"
+                    if st.button(edit_label, key=f"edit_{item_id}", help="Actualizar precio"):
+                        st.session_state["editing_item"] = item
+                        st.rerun()
 
-        st.markdown("---")
-        col_fin, col_clear = st.columns(2)
-        with col_fin:
-            if st.button("✅ Finalizar compra", use_container_width=True, type="primary"):
-                if finish_shopping():
-                    st.success("¡Compra finalizada! Los productos se guardaron en el historial.")
-                    st.rerun()
-        with col_clear:
-            if st.button("🗑️ Limpiar lista", use_container_width=True):
-                if finish_shopping():
-                    st.rerun()
+                with col_del:
+                    if st.button("✕", key=f"del_{item_id}"):
+                        delete_from_list(item_id)
+                        st.rerun()
+
+            st.markdown("---")
+            col_fin, col_clear = st.columns(2)
+            with col_fin:
+                if st.button("✅ Finalizar compra", use_container_width=True, type="primary"):
+                    if finish_shopping():
+                        st.success("¡Compra finalizada! Productos guardados en historial.")
+                        st.rerun()
+            with col_clear:
+                if st.button("🗑️ Limpiar lista", use_container_width=True):
+                    if finish_shopping():
+                        st.rerun()
 
 # ════════════════════════════════════════════════════════════
 # PÁGINA: CONFIG

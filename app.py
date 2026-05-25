@@ -584,7 +584,7 @@ elif page == "lista":
                 is_checked = item.get("tildado", False)
                 sin_precio_item = item.get("price", 0) == 0
 
-                col_chk, col_info, col_edit, col_del = st.columns([1, 5, 1, 1])
+                col_chk, col_info, col_edit, col_del = st.columns([1, 20, 1, 1])
 
                 with col_chk:
                     new_val = st.checkbox("", value=is_checked, key=f"chk_{item_id}")

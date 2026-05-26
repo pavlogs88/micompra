@@ -6,6 +6,7 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime
 import json
 import re
+import pandas as pd
 from PIL import Image
 import io
 
@@ -20,44 +21,33 @@ st.set_page_config(
 # ── CSS ──────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-  .block-container { padding-top: 0.5rem; padding-bottom: 7rem; max-width: 480px; }
-
-  /* Botón primario verde */
-  div[data-testid="stButton"] > button[kind="primary"] {
-    background-color: #3ddc84 !important; color: #000 !important;
-    border: none !important; border-radius: 10px !important;
-    font-weight: 600 !important; font-size: 1rem !important;
-  }
-  div[data-testid="stButton"] > button[kind="secondary"] {
-    border-radius: 10px !important;
+  .block-container { 
+    padding-top: 0.5rem; 
+    padding-bottom: 7rem; 
+    max-width: 1200px;  /* Más ancho en desktop */
   }
 
-    /* Tarjeta total */
-  .total-box {
-    background: #1a1a1a; border: 1px solid #3ddc84;
-    border-radius: 12px; padding: 14px 18px;
-    display: flex; justify-content: space-between; align-items: center;
-    margin-bottom: 1rem;
+  /* Responsive */
+  @media (max-width: 768px) {
+    .block-container { max-width: 480px; }
   }
-  .total-label { color: #888; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
-  .total-amount { color: #3ddc84; font-size: 26px; font-weight: 700; font-family: monospace; }
 
-  /* Tarjeta de item */
+  /* Mejorar tabla */
+  .stTable, .dataframe {
+    width: 100% !important;
+  }
+  .stTable td, .stTable th {
+    padding: 12px 8px !important;
+  }
+
+  /* Tarjetas */
   .item-row {
-    background: #1a1a1a; border: 1px solid #2a2a2a;
-    border-radius: 10px; padding: 10px 14px; margin-bottom: 6px;
+    background: #1a1a1a; 
+    border: 1px solid #2a2a2a;
+    border-radius: 10px; 
+    padding: 12px 14px; 
+    margin-bottom: 8px;
   }
-  .item-name { font-weight: 500; font-size: 14px; }
-  .item-meta { color: #888; font-size: 12px; margin-top: 3px; }
-  .item-price { color: #3ddc84; font-weight: 700; font-family: monospace; font-size: 15px; }
-  .item-done { opacity: 0.45; text-decoration: line-through; }
-  .tag {
-    display: inline-block; background: #2a2a2a; color: #888;
-    border-radius: 20px; padding: 2px 8px; font-size: 11px; margin-right: 4px;
-  }
-
-  div[data-testid="stNumberInput"] input { font-size: 16px; }
-  div[data-testid="stTextInput"] input { font-size: 15px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -480,20 +470,19 @@ if page == "cargar":
             st.rerun()
 
 # ════════════════════════════════════════════════════════════
-# PÁGINA: LISTA (VERSIÓN MEJORADA)
+# PÁGINA: LISTA (MEJORADA)
 # ════════════════════════════════════════════════════════════
 elif page == "lista":
 
     items = load_list_from_sheet()
 
-    # ── Filtros y búsqueda ─────────────────────────────────────
     st.markdown("### 📋 Lista de compras")
 
-    col_search, col_view = st.columns([3, 1])
-    with col_search:
+    # Filtros
+    col1, col2 = st.columns([2, 1])
+    with col1:
         search_text = st.text_input("🔍 Buscar producto...", "", placeholder="Ej: leche, coca, pan...")
-
-    with col_view:
+    with col2:
         view_mode = st.radio("Vista", ["Cards", "Tabla"], horizontal=True, label_visibility="collapsed")
 
     # Filtro por categoría
@@ -508,173 +497,123 @@ elif page == "lista":
         filtered_items = [i for i in filtered_items if search_lower in i["desc"].lower()]
     
     if selected_cat != "Todas":
-        filtered_items = [i for i in filtered_items if i["cat"] == selected_cat]
+        filtered_items = [i for i in filtered_items if i.get("cat") == selected_cat]
 
     # Estadísticas
     total_val = total(filtered_items)
     total_check = sum(float(i.get("price",0)) * float(i.get("qty",1)) 
                      for i in filtered_items if i.get("tildado", False))
     total_pend = total_val - total_check
-    n_til = sum(1 for i in filtered_items if i.get("tildado", False))
-    sin_precio = sum(1 for i in filtered_items if i.get("price", 0) == 0)
+    sin_precio = sum(1 for i in filtered_items if float(i.get("price", 0)) == 0)
 
     col_t1, col_t2, col_t3 = st.columns(3)
-    with col_t1:
-        st.metric("Total", fmt_price(total_val))
-    with col_t2:
-        st.metric("✓ En changuito", fmt_price(total_check))
-    with col_t3:
-        st.metric("⏳ Pendiente", fmt_price(total_pend))
+    with col_t1: st.metric("Total", fmt_price(total_val))
+    with col_t2: st.metric("✓ En changuito", fmt_price(total_check))
+    with col_t3: st.metric("⏳ Pendiente", fmt_price(total_pend))
 
     if sin_precio > 0:
-        st.warning(f"⚠️ {sin_precio} producto{'s' if sin_precio>1 else ''} sin precio — tocá 💲 para actualizar")
+        st.warning(f"⚠️ {sin_precio} producto{'s' if sin_precio>1 else ''} sin precio")
 
-    st.caption(f"{n_til} de {len(filtered_items)} tildados • {len(items)} en total")
-
+    st.caption(f"{sum(1 for i in filtered_items if i.get('tildado'))} de {len(filtered_items)} tildados • {len(items)} en total")
     st.markdown("---")
 
-    # ── Formulario de edición ─────────────────────────────────
-    if st.session_state["editing_item"]:
-        # (Mantengo el código de edición que ya tenías, solo lo indenté)
+    # === EDICIÓN ===
+    if st.session_state.get("editing_item"):
         edit = st.session_state["editing_item"]
-        st.markdown(f"### ✏️ Actualizar precio")
-        st.markdown(f"**{edit['desc']}**")
-
+        st.markdown(f"### ✏️ Actualizar: **{edit['desc']}**")
+        
         last_price = get_last_price(edit['desc'])
-        if last_price and edit['price'] == 0:
-            st.info(f"💡 Último precio registrado: {fmt_price(last_price)}")
+        if last_price and float(edit.get('price',0)) == 0:
+            st.info(f"💡 Último precio: {fmt_price(last_price)}")
 
-        default_price = last_price if (last_price and edit['price'] == 0) else edit['price']
-        units = ["unidad", "kg", "100g", "L"]
-        unit_idx = units.index(edit['unit']) if edit['unit'] in units else 0
+        e_price = st.number_input("Precio unitario ($)", min_value=0.0, value=float(edit.get('price',0)), step=10.0, format="%.2f")
+        e_qty = st.number_input("Cantidad", min_value=1, value=int(edit.get('qty',1)), step=1)
+        e_unit = st.radio("Unidad", ["unidad", "kg", "100g", "L"], horizontal=True)
 
-        e_price = st.number_input("Precio unitario ($)", min_value=0.0, value=float(default_price or 0), step=10.0, format="%.2f", key="edit_price")
-        e_qty   = st.number_input("Cantidad", min_value=1, value=int(edit['qty']), step=1, key="edit_qty")
-        e_unit  = st.radio("Unidad", units, index=unit_idx, horizontal=True, key="edit_unit")
-
-        col_ok, col_cancel = st.columns(2)
+        col_ok, col_can = st.columns(2)
         with col_ok:
-            if st.button("✓ Guardar", type="primary", use_container_width=True):
-                if e_price <= 0:
-                    st.error("Ingresá un precio válido.")
-                else:
-                    if update_price_in_list(edit["id"], e_price, e_qty, e_unit):
-                        st.session_state["editing_item"] = None
-                        st.rerun()
-        with col_cancel:
-            if st.button("Cancelar", use_container_width=True):
+            if st.button("✓ Guardar cambios", type="primary"):
+                update_price_in_list(edit["id"], e_price, e_qty, e_unit)
                 st.session_state["editing_item"] = None
                 st.rerun()
+        with col_can:
+            if st.button("Cancelar"):
+                st.session_state["editing_item"] = None
+                st.rerun()
+        st.markdown("---")
 
-    # ── VISTA CARDS ───────────────────────────────────────────
+    # === VISTA CARDS ===
     elif view_mode == "Cards":
         if not filtered_items:
-            st.info("No se encontraron productos con los filtros aplicados.")
-        else:
-            for item in filtered_items:
-                item_id = item["id"]
-                is_checked = item.get("tildado", False)
-                sin_precio_item = item.get("price", 0) == 0
+            st.info("No hay productos")
+        for item in filtered_items:
+            item_id = item["id"]
+            is_checked = item.get("tildado", False)
+            sin_precio_item = float(item.get("price", 0)) == 0
 
-                col_chk, col_info, col_edit, col_del = st.columns([1, 5.5, 1, 1])
+            col_chk, col_info, col_edit, col_del = st.columns([0.8, 5, 1, 1])
 
-                with col_chk:
-                    new_val = st.checkbox("", value=is_checked, key=f"chk_{item_id}")
-                    if new_val != is_checked:
-                        toggle_tildado(item_id, new_val)
-                        st.rerun()
+            with col_chk:
+                if st.checkbox("", value=is_checked, key=f"chk_{item_id}"):
+                    if not is_checked: toggle_tildado(item_id, True); st.rerun()
+                elif is_checked:
+                    toggle_tildado(item_id, False); st.rerun()
 
-                with col_info:
-                    name_style = "item-done" if is_checked else ""
-                    price_display = fmt_price(item['price'] * item['qty']) if not sin_precio_item else "sin precio"
-                    price_color = "#3ddc84" if not sin_precio_item else "#f5a623"
+            with col_info:
+                st.markdown(f"""
+                <div class="item-row">
+                  <div style="font-weight:500;">{item['desc']}</div>
+                  <div style="color:#888;font-size:13px;">
+                    {item.get('cat','')} → {item.get('sub','')}
+                  </div>
+                  <div style="color:#aaa;font-size:13px;">{item['qty']} {item['unit']}</div>
+                </div>
+                """, unsafe_allow_html=True)
 
-                    st.markdown(f"""
-                    <div class="item-row">
-                      <div class="item-name {name_style}">{item['desc']}</div>
-                      <div class="item-meta">
-                        <span class="tag">{item['cat']}</span>
-                        <span class="tag">{item['sub']}</span>
-                        <span class="tag">{item['qty']} {item['unit']}</span>
-                      </div>
-                      <div style="color:{price_color};font-weight:700;font-family:monospace;margin-top:4px;">
-                        {price_display}
-                      </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+            with col_edit:
+                if st.button("💲" if sin_precio_item else "✏️", key=f"edit_{item_id}"):
+                    st.session_state["editing_item"] = item
+                    st.rerun()
+            with col_del:
+                if st.button("✕", key=f"del_{item_id}"):
+                    delete_from_list(item_id)
+                    st.rerun()
 
-                with col_edit:
-                    edit_label = "💲" if sin_precio_item else "✏️"
-                    if st.button(edit_label, key=f"edit_{item_id}", help="Editar"):
-                        st.session_state["editing_item"] = item
-                        st.rerun()
-
-                with col_del:
-                    if st.button("✕", key=f"del_{item_id}"):
-                        delete_from_list(item_id)
-                        st.rerun()
-
-    # ── VISTA TABLA ───────────────────────────────────────────
-    else:  # Tabla
+    # === VISTA TABLA (Mejorada) ===
+    else:
         if not filtered_items:
-            st.info("No se encontraron productos.")
+            st.info("No hay productos con los filtros actuales.")
         else:
-            table_data = []
+            # Usamos st.dataframe con configuración para que se vea bien
+            data_for_table = []
             for item in filtered_items:
-                price_display = fmt_price(item['price'] * item['qty']) if item.get("price", 0) > 0 else "sin precio"
-                table_data.append({
-                    "Tildado": "✅" if item.get("tildado") else "⬜",
-                    "Producto": f"{item['desc']}<br><small>{item['cat']} → {item['sub']}</small>",
-                    "Cant": f"{item['qty']} {item['unit']}",
-                    "Precio": price_display,
-                    "Acciones": item["id"]
+                data_for_table.append({
+                    "✅": "☑️" if item.get("tildado") else "⬜",
+                    "Producto": item["desc"],
+                    "Categoría": f"{item.get('cat','')} → {item.get('sub','')}",
+                    "Cantidad": f"{item['qty']} {item['unit']}",
+                    "Precio Total": fmt_price(float(item.get("price",0)) * float(item.get("qty",1))) if float(item.get("price",0)) > 0 else "sin precio",
+                    "id": item["id"]
                 })
 
-            # Mostrar tabla con HTML (más control)
-            for row in table_data:
-                col1, col2, col3, col4, col5 = st.columns([0.8, 4, 1.5, 1.8, 1.5])
-                with col1:
-                    item_id = row["Acciones"]
-                    item_obj = next((i for i in filtered_items if i["id"] == item_id), None)
-                    is_checked = item_obj.get("tildado", False) if item_obj else False
-                    if st.checkbox("", value=is_checked, key=f"tbl_chk_{item_id}"):
-                        if not is_checked:
-                            toggle_tildado(item_id, True)
-                            st.rerun()
-                    else:
-                        if is_checked:
-                            toggle_tildado(item_id, False)
-                            st.rerun()
+            df = pd.DataFrame(data_for_table)  # Necesitamos importar pandas
 
-                with col2:
-                    st.markdown(row["Producto"], unsafe_allow_html=True)
-                with col3:
-                    st.markdown(row["Cant"], unsafe_allow_html=True)
-                with col4:
-                    st.markdown(f"<div style='text-align:right;'>{row['Precio']}</div>", unsafe_allow_html=True)
-                with col5:
-                    item_obj = next((i for i in filtered_items if i["id"] == row["Acciones"]), None)
-                    sin_p = item_obj.get("price", 0) == 0 if item_obj else True
-                    if st.button("💲" if sin_p else "✏️", key=f"tbl_edit_{row['Acciones']}"):
-                        st.session_state["editing_item"] = item_obj
-                        st.rerun()
-                    if st.button("✕", key=f"tbl_del_{row['Acciones']}"):
-                        delete_from_list(row["Acciones"])
-                        st.rerun()
+            # Mostrar dataframe configurable
+            st.dataframe(
+                df.drop(columns=["id"]),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "✅": st.column_config.TextColumn("Tildado", width="small"),
+                    "Producto": st.column_config.TextColumn("Producto", width="medium"),
+                    "Categoría": st.column_config.TextColumn("Categoría", width="medium"),
+                    "Cantidad": st.column_config.TextColumn("Cantidad", width="small"),
+                    "Precio Total": st.column_config.TextColumn("Precio Total", width="small")
+                }
+            )
 
-    # ── Botones finales ───────────────────────────────────────
-    st.markdown("---")
-    col_fin, col_clear = st.columns(2)
-    with col_fin:
-        if st.button("✅ Finalizar compra", use_container_width=True, type="primary"):
-            if finish_shopping():
-                st.success("¡Compra finalizada!")
-                st.rerun()
-    with col_clear:
-        if st.button("🗑️ Limpiar lista completa", use_container_width=True):
-            if st.checkbox("¿Estás seguro? Esta acción no se puede deshacer", key="confirm_clear"):
-                if finish_shopping():
-                    st.rerun()
+            # Botones de acción (por ahora separados)
+            st.caption("Para editar o eliminar, usa la vista **Cards** por el momento.")
 
 # ════════════════════════════════════════════════════════════
 # PÁGINA: CONFIG

@@ -579,41 +579,59 @@ elif page == "lista":
                     delete_from_list(item_id)
                     st.rerun()
 
-    # === VISTA TABLA (Mejorada) ===
+    
+    # === VISTA TABLA (Con botones) ===
     else:
         if not filtered_items:
             st.info("No hay productos con los filtros actuales.")
         else:
-            # Usamos st.dataframe con configuración para que se vea bien
-            data_for_table = []
+            st.markdown("### Tabla de productos")
+
             for item in filtered_items:
-                data_for_table.append({
-                    "✅": "☑️" if item.get("tildado") else "⬜",
-                    "Producto": item["desc"],
-                    "Categoría": f"{item.get('cat','')} → {item.get('sub','')}",
-                    "Cantidad": f"{item['qty']} {item['unit']}",
-                    "Precio Total": fmt_price(float(item.get("price",0)) * float(item.get("qty",1))) if float(item.get("price",0)) > 0 else "sin precio",
-                    "id": item["id"]
-                })
+                item_id = item["id"]
+                is_checked = item.get("tildado", False)
+                sin_precio_item = float(item.get("price", 0)) == 0
 
-            df = pd.DataFrame(data_for_table)  # Necesitamos importar pandas
+                # Fila que simula tabla
+                col_chk, col_prod, col_cat, col_cant, col_precio, col_acciones = st.columns([0.6, 3.5, 2.5, 1.4, 2, 1.8])
 
-            # Mostrar dataframe configurable
-            st.dataframe(
-                df.drop(columns=["id"]),
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "✅": st.column_config.TextColumn("Tildado", width="small"),
-                    "Producto": st.column_config.TextColumn("Producto", width="medium"),
-                    "Categoría": st.column_config.TextColumn("Categoría", width="medium"),
-                    "Cantidad": st.column_config.TextColumn("Cantidad", width="small"),
-                    "Precio Total": st.column_config.TextColumn("Precio Total", width="small")
-                }
-            )
+                with col_chk:
+                    if st.checkbox("", value=is_checked, key=f"tbl_chk_{item_id}"):
+                        if not is_checked:
+                            toggle_tildado(item_id, True)
+                            st.rerun()
+                    elif is_checked:
+                        toggle_tildado(item_id, False)
+                        st.rerun()
 
-            # Botones de acción (por ahora separados)
-            st.caption("Para editar o eliminar, usa la vista **Cards** por el momento.")
+                with col_prod:
+                    st.markdown(f"**{item['desc']}**")
+
+                with col_cat:
+                    st.markdown(f"<small>{item.get('cat','')} → {item.get('sub','')}</small>", unsafe_allow_html=True)
+
+                with col_cant:
+                    st.markdown(f"{item['qty']} {item['unit']}")
+
+                with col_precio:
+                    precio_total = float(item.get("price", 0)) * float(item.get("qty", 1))
+                    if precio_total > 0:
+                        st.markdown(f"<div style='text-align:right; color:#3ddc84; font-weight:600;'>{fmt_price(precio_total)}</div>", unsafe_allow_html=True)
+                    else:
+                        st.markdown("<div style='text-align:right; color:#f5a623;'>sin precio</div>", unsafe_allow_html=True)
+
+                with col_acciones:
+                    col_edit_btn, col_del_btn = st.columns(2)
+                    with col_edit_btn:
+                        if st.button("✏️" if not sin_precio_item else "💲", key=f"tbl_edit_{item_id}", use_container_width=True):
+                            st.session_state["editing_item"] = item
+                            st.rerun()
+                    with col_del_btn:
+                        if st.button("✕", key=f"tbl_del_{item_id}", use_container_width=True):
+                            delete_from_list(item_id)
+                            st.rerun()
+
+            st.caption("Usá los botones ✏️ / 💲 para editar y ✕ para eliminar")
 
 # ════════════════════════════════════════════════════════════
 # PÁGINA: CONFIG
